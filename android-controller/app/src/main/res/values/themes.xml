@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RemoteAssist" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#185FA5</item>
+        <item name="colorPrimaryVariant">#0C447C</item>
+        <!-- 不写死 windowLightStatusBar：交由 DayNight 父主题按亮/暗模式决定图标颜色；
+             控制页背景固定深色，由 SafeAreaInsets 在运行时强制使用浅色状态栏图标 -->
+    </style>
+</resources>

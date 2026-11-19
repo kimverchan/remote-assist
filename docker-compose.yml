@@ -1,0 +1,42 @@
+# 一键启动中继服务器：在仓库根目录执行
+#   JWT_SECRET=<32位随机> ADMIN_API_KEY=<16位随机> docker compose up -d --build
+# 也可以把这两个值写进根目录 .env（已被 .gitignore 忽略）。
+# 显式指定项目名：工作目录是中文时，compose 默认的目录名会被判为非法。
+name: remote-assist-relay
+
+services:
+  relay:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: remote-assist-relay:latest
+    container_name: remote-assist-relay
+    restart: unless-stopped
+    # 只绑定回环：容器端口不得直接暴露到公网，必须由边缘反代接入。
+    # 否则攻击者可伪造 X-Forwarded-For 重置限流桶（配对码枚举防护失效）。
+    ports:
+      - "127.0.0.1:${RELAY_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # 仅当边缘反代会「覆盖」而非透传 X-Forwarded-For 时才设为 true。
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-1}"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须设置为至少 32 字符的随机值}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY 必须设置为至少 16 字符的随机值}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      MAX_FRAME_BYTES: ${MAX_FRAME_BYTES:-524288}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-60}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- release 默认禁止明文流量：cleartextEnabled=false 由 Gradle 注入。
+         仅当用 scripts/build-apk-ip-http.sh 带 -PrelayAllowCleartext=true 构建时，
+         placeholder 才为 true，供「纯公网 IP + 明文 HTTP 中继」专用包使用。
+         debug 变体走 src/debug/AndroidManifest.xml，不受本文件影响。 -->
+    <application android:usesCleartextTraffic="${cleartextEnabled}" />
+</manifest>

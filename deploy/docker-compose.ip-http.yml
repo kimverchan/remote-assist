@@ -1,0 +1,63 @@
+# 纯公网 IP + 明文 HTTP 模式（仅临时联调，必须配 debug 包）
+#
+# 与 docker-compose.yml 二选一，不要同时跑：
+#   启用：docker compose -f docker-compose.ip-http.yml up -d --build --remove-orphans
+#   切回 HTTPS 域名模式（先把 .env 的 RELAY_DOMAIN 改成真实域名）：
+#         docker compose up -d --build --remove-orphans
+#
+# 为什么不用 Caddy：Let's Encrypt 不为纯 IP 签发公开可信证书，Caddy 只会给自签证书，
+# 而 Android release 包强制 HTTPS 且不信任自签证书。此模式直接把 relay 暴露为明文 HTTP。
+#
+# ⚠ 安全代价：屏幕画面、控制指令、设备号密码、JWT 全部明文过公网，可被中间人窃听或篡改。
+#   仅限可信网络内的临时联调，禁止分发、禁止用于真实远程协助。
+
+name: remote-assist-relay
+
+services:
+  relay:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    image: remote-assist-relay:latest
+    container_name: remote-assist-relay
+    restart: unless-stopped
+    ports:
+      # 公网 3000 → 容器 3000；云安全组需放行 TCP 3000（仅本模式的例外）。
+      # 保持 3000 是为了让 `bash verify.sh http://127.0.0.1:3000` 在宿主机和容器内都可达。
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # 关键：没有反代，绝不能开 TRUST_PROXY，否则伪造 X-Forwarded-For 可绕过限流。
+      # 直连时 socket 对端 IP 本来就是真实客户端 IP，按 IP 限流仍然准确。
+      TRUST_PROXY: "false"
+      TRUST_PROXY_HOPS: "1"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须至少 32 字符随机值}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY 必须至少 16 字符随机值}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAX_FRAME_BYTES: ${MAX_FRAME_BYTES:-524288}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-60}
+      # 设备凭据（App 自动生成设备号 + 6 位密码并注册，服务端只存 peppered 摘要）
+      DEVICE_DATA_DIR: ${DEVICE_DATA_DIR:-/app/data}
+      DEVICE_LOCK_THRESHOLD: ${DEVICE_LOCK_THRESHOLD:-5}
+      DEVICE_LOCK_MINUTES: ${DEVICE_LOCK_MINUTES:-15}
+      TEMP_PASSWORD_MAX_MINUTES: ${TEMP_PASSWORD_MAX_MINUTES:-120}
+    volumes:
+      # 持久化设备凭据，重建/重启容器后已注册设备不丢
+      - device-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s
+
+volumes:
+  device-data:

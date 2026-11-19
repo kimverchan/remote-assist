@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 仅 debug 变体允许明文 HTTP（局域网 / 临时隧道联调）。
+         release 构建不合并本文件，系统默认禁止明文流量。 -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

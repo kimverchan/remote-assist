@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">远程协助 · 受控端</string>
+    <string name="title">远程协助 · 受控端</string>
+    <string name="status_idle">尚未开始协助</string>
+    <string name="start">开始协助</string>
+    <string name="retry_start">重试连接</string>
+    <string name="stop">结束协助</string>
+    <string name="open_accessibility">开启无障碍服务</string>
+    <string name="server_hint">中继服务器地址（开发期可用 http://局域网IP:8080）</string>
+    <string name="safety_tip">安全提示：协助期间对方可以看到并操作你的屏幕。请只把设备号和密码告知信任的人，随时可点「结束协助」立即断开。</string>
+    <string name="accessibility_description">用于把协助者的点击、滑动、按键与输入操作注入到本机，从而实现远程协助。仅在协助会话进行时使用，不会采集或上传屏幕内容之外的信息。</string>
+    <string name="notification_channel">远程协助会话</string>
+    <string name="notification_title">远程协助进行中</string>
+    <string name="notification_text">你的屏幕正在共享，点此返回或随时断开</string>
+    <string name="notification_channel_auth">协助授权请求</string>
+    <string name="auth_request_title">有人请求远程协助你的手机</string>
+    <string name="auth_request_text">%1$s 请求查看并操作你的屏幕，确认后才允许连接</string>
+    <string name="action_allow">允许协助</string>
+    <string name="action_deny">拒绝</string>
+    <string name="action_stop">随时断开</string>
+
+    <string name="device_card_title">本机设备（类似向日葵，控制端用设备号 + 6 位密码连接）</string>
+    <string name="device_id_label">设备号（点击数字可复制）</string>
+    <string name="device_password_label">长期密码 · 6 位数字（点击可复制）</string>
+    <string name="device_copy">复制设备号和密码</string>
+    <string name="device_reset_password">重置长期密码（随机 6 位）</string>
+    <string name="device_reset_confirm">重置后旧密码立即失效，控制端需更新密码。确定重置？</string>
+    <string name="device_reset_done">长期密码已重置并同步到服务器</string>
+
+    <string name="temp_title">临时密码（可选，限时有效）</string>
+    <string name="temp_none">未启用临时密码</string>
+    <string name="temp_generate">生成临时密码</string>
+    <string name="temp_clear">清除临时密码</string>
+    <string name="temp_generated">临时密码：%1$s（%2$d 分钟内有效）</string>
+    <string name="temp_cleared">临时密码已清除</string>
+
+    <string name="unattended_title">直连与自动恢复</string>
+    <string name="unattended_enable">自动同意协助请求（无人值守，无需本机点击）</string>
+    <string name="unattended_auto_restart">断线/会话关闭后自动重建会话</string>
+    <string name="unattended_hint">控制端用「设备号 + 6 位密码」直连，无需配对码。临时密码在有效期内也可用，到期自动失效，长期密码始终可用。</string>
+    <string name="unattended_warning">安全警告：开启后任何持有正确密码、能连上中继的人都能直接看到并操作这台设备。密码仅 6 位数字，服务端有错误锁定与限流保护，但仍请勿向陌生人泄露；「随时断开」始终是人工急停开关。</string>
+
+    <string name="device_id_stability_note">设备号由本机硬件标识派生，卸载重装保持不变；恢复出厂或换机后会变化。</string>
+</resources>

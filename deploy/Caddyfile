@@ -1,0 +1,28 @@
+# Caddy 边缘反代：自动 HTTPS + WebSocket 透传
+# 域名与邮箱由 docker-compose.yml 通过环境变量注入，无需手改本文件。
+#
+# 关键点：
+#   - Caddy 的 reverse_proxy 默认透传 Upgrade / Connection，WebSocket 无需额外指令；
+#   - X-Forwarded-For 必须「覆盖」而非「透传/追加」，否则客户端可伪造 IP 重置限流桶。
+#     `caddy validate` 会提示这两条 header_up "unnecessary"，属与默认行为重复的无害警告；
+#     此处显式声明是为了锁定 XFF 为 set 覆盖（已用 caddy adapt 核对生成的 JSON）。
+#   - 读写超时远大于服务端 15s 心跳，避免长连接被反代掐断。
+{
+	email {$CADDY_EMAIL}
+}
+
+{$RELAY_DOMAIN} {
+	log
+
+	reverse_proxy relay:3000 {
+		header_up Host {http.request.host}
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up X-Forwarded-Proto {http.request.scheme}
+
+		transport http {
+			dial_timeout 10s
+			read_timeout 3600s
+			write_timeout 3600s
+		}
+	}
+}

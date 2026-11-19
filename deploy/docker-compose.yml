@@ -1,0 +1,94 @@
+# 生产部署编排：自有云服务器（VPS）+ Docker
+#
+# 目录要求（上传后保持同级）：
+#   /opt/remote-assist-relay/
+#     ├── server/     ← 本地 server/ 目录（排除 node_modules、dist、.env）
+#     └── deploy/     ← 本目录（docker-compose.yml / Caddyfile / .env / *.sh）
+#
+# 首次部署：  bash deploy.sh relay.example.com
+# 后续更新：  bash deploy.sh
+# 线上验证：  bash verify.sh
+#
+# 与仓库根目录的 docker-compose.yml 区别：
+#   1. 多一个 caddy 容器，自动申请/续期 Let's Encrypt 证书并透传 WebSocket；
+#   2. TRUST_PROXY=true，让限流按真实客户端 IP 而不是所有用户共用的 127.0.0.1；
+#   3. relay 端口仍只绑 127.0.0.1，公网流量只能经 Caddy 进入。
+
+name: remote-assist-relay
+
+services:
+  relay:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    image: remote-assist-relay:latest
+    container_name: remote-assist-relay
+    restart: unless-stopped
+    # 仅本机可访问；公网只暴露 Caddy 的 80/443。
+    # 不要改成 "3000:3000"：绕过反代后 X-Forwarded-For 可被伪造，设备密码限流会失效。
+    ports:
+      - "127.0.0.1:${RELAY_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      # 一跳（Caddy → relay）。Caddyfile 中已强制覆盖 X-Forwarded-For。
+      TRUST_PROXY: "${TRUST_PROXY:-true}"
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-1}"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须至少 32 字符随机值}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?ADMIN_API_KEY 必须至少 16 字符随机值}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MAX_FRAME_BYTES: ${MAX_FRAME_BYTES:-524288}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-60}
+      # 设备凭据（App 自动生成设备号 + 6 位密码并注册，服务端只存 peppered 摘要）
+      DEVICE_DATA_DIR: ${DEVICE_DATA_DIR:-/app/data}
+      DEVICE_LOCK_THRESHOLD: ${DEVICE_LOCK_THRESHOLD:-5}
+      DEVICE_LOCK_MINUTES: ${DEVICE_LOCK_MINUTES:-15}
+      TEMP_PASSWORD_MAX_MINUTES: ${TEMP_PASSWORD_MAX_MINUTES:-120}
+    volumes:
+      # 持久化设备凭据，重建/重启容器后已注册设备不丢
+      - device-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+process.env.PORT+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s
+    networks:
+      - relay-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: remote-assist-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # 如需 HTTP/3，可在云安全组放行 UDP 443 后追加： - "443:443/udp"
+    environment:
+      RELAY_DOMAIN: ${RELAY_DOMAIN:?RELAY_DOMAIN 必须是已解析到本机的公网域名}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      relay:
+        condition: service_healthy
+    networks:
+      - relay-net
+
+volumes:
+  caddy-data:
+  caddy-config:
+  device-data:
+
+networks:
+  relay-net:
+    driver: bridge

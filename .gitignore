@@ -1,0 +1,31 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+.DS_Store
+.idea/
+*.iml
+.gradle/
+local.properties
+keystore.properties
+*.jks
+*.keystore
+.cxx/
+*.apk
+*.aab
+.expo/
+web-console/dist/
+server/coverage/
+
+# 本地工具数据、运行数据与备份（不入库）
+.workbuddy/
+*.genie
+backup/
+server/data/
+server/data-*/
+
+# 误生成的空文件（0 字节，无内容）
+、、
+、、。
+适用版本：v2

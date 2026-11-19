@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">远程协助 · 控制端</string>
+    <string name="title">远程协助 · 控制端</string>
+    <string name="intro">输入对方设备号与 6 位密码即可连接（类似向日葵）</string>
+    <string name="server_hint">中继服务器地址</string>
+    <string name="connect">连接设备</string>
+    <string name="status_idle">未连接</string>
+    <string name="btn_back">返回</string>
+    <string name="btn_home">主页</string>
+    <string name="btn_recents">最近</string>
+    <string name="btn_text">输入文字</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="tip">在画面上点击、长按、滑动即可操作对方手机。所有坐标按屏幕比例换算，适配不同分辨率。</string>
+
+    <string name="device_id_hint">设备号（9 位数字，如 382 915 046）</string>
+    <string name="password_hint">密码（6 位数字；对方设置的临时密码在有效期内也可用）</string>
+    <string name="status_direct_connecting">正在连接设备…</string>
+    <string name="err_direct_failed">连接失败，请核对设备号与密码</string>
+    <string name="err_server_url_invalid">服务器地址不合法</string>
+    <string name="err_network">网络不可用，请检查服务器地址与网络后重试</string>
+</resources>
