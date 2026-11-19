@@ -11,7 +11,7 @@
 | 请求 | 结果 |
 |---|---|
 | `GET /health?sharecode=...` | 200，正常到达后端 |
-| `POST /api/v1/sessions?sharecode=...` | 201，配对码正常签发 |
+| `POST /api/v1/sessions?sharecode=...` | 400（缺 deviceAuth）；带 deviceAuth 时 201 |
 | WebSocket Upgrade 到 `/ws`，分别带 `sharecode` / `__wb_rsc` Cookie / `Origin` 四种组合 | 全部 `401`，响应头 `Server: CloudStudio Gateway` |
 | WebSocket Upgrade 到普通 REST 路径 `/health` | 网关 `404`，同一路径普通 GET 却是后端 `200` |
 
@@ -51,9 +51,12 @@
 | `RATE_LIMIT_MAX` | — | `60` | 每 IP 每窗口请求数 |
 | `HEARTBEAT_INTERVAL_MS` / `HEARTBEAT_TIMEOUT_MS` | — | `15000` / `30000` | 后者必须大于前者 |
 | `SESSION_TTL` / `MAX_SESSIONS` | — | `3600` / `200` | 会话存活与并发上限 |
-| `UNATTENDED_DEVICES` | — | 空（功能关闭） | 无人值守设备白名单，格式 `deviceId:sha256hex(secret),...`；服务端只存摘要，留空则直连接口返回 403。见 `docs/UNATTENDED.md` |
+| `DEVICE_DATA_DIR` | — | `/app/data`（容器）/ `./data`（本地） | 设备凭据摘要持久化目录，需用卷挂载跨重启保留 |
+| `DEVICE_LOCK_THRESHOLD` | — | 5 | 连续密码错误锁定阈值 |
+| `DEVICE_LOCK_MINUTES` | — | 15 | 锁定时长（分钟） |
+| `TEMP_PASSWORD_MAX_MINUTES` | — | 120 | 临时密码最长有效期（分钟）。设备号与 6 位密码由受控端 App 自动生成并注册，无需白名单配置。见 `docs/UNATTENDED.md` |
 
-> ⚠️ `TRUST_PROXY=true` 时 Express 会用 `X-Forwarded-For` 解析客户端 IP。若容器端口直接暴露在公网，攻击者每请求换一个伪造 IP 就能重置按 IP 的限流桶。因此仓库的 `docker-compose.yml` 只把端口绑定到 `127.0.0.1`，并要求反代**覆盖**（而非透传）该请求头。配对码认领另有「按码」限流与服务端失败锁定，与 IP 完全无关，是防 6 位码枚举的最后一道硬上限。
+> ⚠️ `TRUST_PROXY=true` 时 Express 会用 `X-Forwarded-For` 解析客户端 IP。若容器端口直接暴露在公网，攻击者每请求换一个伪造 IP 就能重置按 IP 的限流桶。因此仓库的 `docker-compose.yml` 只把端口绑定到 `127.0.0.1`，并要求反代**覆盖**（而非透传）该请求头。设备密码认领另有「按 deviceId」限流与服务端失败锁定，与 IP 完全无关，是防 6 位数字密码枚举的最后一道硬上限。
 
 生成密钥：
 
@@ -135,7 +138,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         # 覆盖而非透传：客户端自带的 X-Forwarded-For 不可信，
-        # 透传会让攻击者伪造 IP 绕过配对码限流。
+        # 透传会让攻击者伪造 IP 绕过按 IP 的限流。
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
@@ -167,7 +170,7 @@ server {
 - [ ] `CORS_ORIGINS` 只列 Web 看板域名，不要写 `*`。
 - [ ] 全链路 HTTPS/WSS；**只分发常规 release 包**（`dist/release/`，强制 HTTPS 且不预置地址）。`dist/ip-http/` 的 IP 直连专用包虽是正式签名，但放开了明文 HTTP 且写死 `http://8.138.221.245:3000`，仅限临时联调、禁止分发。
 - [ ] 两端 App 首页填 `https://relay.example.com`（不要带 `?sharecode=`，那是 WorkBuddy 网关专用）。
-- [ ] 网关层再加一层限流；当前服务内限流是单进程固定窗口，多实例部署需外置。配对码另有按码 5 次/TTL 限流与失败锁定（与 IP 无关）。
+- [ ] 网关层再加一层限流；当前服务内限流是单进程固定窗口，多实例部署需外置。设备密码另有按 deviceId 限流与失败锁定（与 IP 无关）。
 - [ ] 确认受控端「允许协助」通知能正常弹出（Android 13+ 需授予 `POST_NOTIFICATIONS`）；被协助者未确认前不推画面、不下发操作。
 - [ ] 会话是内存态，重启即全部失效（符合「断开即失效」安全模型）；不要为此加持久化。
 - [ ] Web 运维看板 `VITE_API_BASE_URL` 指向该域名；看板只存内存中的 observer token。
@@ -186,7 +189,7 @@ cd server
 BASE_URL=https://relay.example.com node scripts/verify-remote.mjs
 ```
 
-脚本会检查：健康检查与 requestId、无令牌 401、创建会话与 6 位配对码、错误码拒绝、双端 WS 握手、`session.ready` / `session.peer_joined`、双向文本帧转发、二进制视频帧逐字节一致、refresh 轮换与旧令牌失效、越权指令 `close 4000`、非法令牌拒绝建连。**全部 PASS 才说明这条链路能跑真实远程协助。**
+脚本会检查：健康检查与 requestId、无令牌 401、创建会话（设备号 + 6 位密码自动注册）、错误密码锁定、双端 WS 握手、`session.ready` / `session.peer_joined`、双向文本帧转发、二进制视频帧逐字节一致、refresh 轮换与旧令牌失效、越权指令 `close 4000`、非法令牌拒绝建连。**全部 PASS 才说明这条链路能跑真实远程协助。**
 
 若 `BASE_URL` 是 WorkBuddy 临时发布链接（带 `?sharecode=`），脚本会把 sharecode 附加到每个请求上；此时 WS 用例必然失败，属已知平台限制。
 

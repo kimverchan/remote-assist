@@ -9,9 +9,9 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 | 版本 | 变更 | 兼容性 |
 |---|---|---|
 | v1 | 初版：配对、JWT、视频二进制帧、控制指令 | — |
-| v2 | 新增会话级授权 `session.authorize_*`；落地配对码失败锁定；限流改为按码 + 真实来源双维度 | **不兼容**：信封 `v` 与二进制帧头 `version` 均为 2，v1 客户端无法与 v2 服务端互通，三端必须同步升级 |
+| v2 | 新增会话级授权 `session.authorize_*`；改为设备号 + 6 位密码直连（移除配对码）；限流按 IP + 设备号双维度，含失败锁定 | **不兼容**：信封 `v` 与二进制帧头 `version` 均为 2，v1 客户端无法与 v2 服务端互通，三端必须同步升级 |
 
-> **v2 无人值守扩展（向后兼容，不递增 `PROTOCOL_VERSION`）**：`POST /sessions` 增加可选 `unattended` 字段，新增 `POST /sessions/claim-device` 直连接口。WebSocket 帧格式、消息类型与 `session.authorize_*` 流程均未改变，旧客户端可继续按 6 位配对码使用。详见 `docs/UNATTENDED.md`。
+> **设备号 + 6 位密码（v2）**：`POST /sessions` 必填 `deviceAuth:{deviceId,password}`，首次自动注册；配对码 `/claim` 接口已删除。WebSocket 帧格式、消息类型与 `session.authorize_*` 流程未改变。详见 `docs/UNATTENDED.md`。
 
 ---
 
@@ -21,11 +21,11 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 受控端                          中继服务器                     控制端
   |  POST /sessions (host)        |                              |
   |------------------------------>|                              |
-  |  {sessionId, pairingCode,...} |                              |
+  |  {sessionId, accessToken,...} |                              |
   |<------------------------------|                              |
   |  WS /ws  Authorization:       |                              |
   |==============================>|  等待配对                     |
-  |                              |<-- POST /sessions/claim -------|  用户输入 6 位配对码
+  |                              |<-- POST /sessions/claim-device |  用户输入设备号 + 6 位密码
   |                              |  {controllerToken, hostInfo} ->|
   |  session.peer_joined <--------|<==============================|  WS /ws
   |  session.authorize_request <--|                              |
@@ -41,12 +41,12 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 ```
 
 **关键约束**
-- 配对码 6 位数字，TTL 60s，**一次性**（claim 成功即销毁）。
-- **失败锁定（v2 落地）**：认领失败按「配对码」累计次数，达到 `PAIRING_MAX_ATTEMPTS`（默认 5）立即作废该码并返回 `PAIRING_EXPIRED`；计数与客户端 IP、`X-Forwarded-For` 无关，换 IP 或伪造请求头都无法重置。
+- 设备号 9 位数字（ANDROID_ID 派生，重装稳定），密码 6 位数字（长期 + 限时临时）。
+- **失败锁定**：认领失败按「设备号」累计次数，达到 `DEVICE_LOCK_THRESHOLD`（默认 5）锁定 `DEVICE_LOCK_MINUTES`（默认 15）分钟并返回 `DEVICE_LOCKED`；计数与客户端 IP、`X-Forwarded-For` 无关，换 IP 或伪造请求头都无法重置。
 - 一个会话最多 1 个 host、1 个 controller；observer 通过 REST 只读，不进房间。
 - **会话级授权（v2）**：控制端入房不等于获得控制权。服务端向受控端发 `session.authorize_request`（附带协助者设备型号与系统版本）；只有受控端回复 `session.authorize_grant` 后，服务端才允许转发 `control.*`。授权绑定到该控制端 `deviceId`，换设备重连必须重新确认；`session.authorize_deny` 立即关闭整个会话。授权前受控端也不推送画面。
 - 受控端常驻通知必须提供「随时断开」，点击后 `DELETE /sessions/:id` 并释放本地注入能力。
-- **无人值守模式**：控制端改用 `deviceId + secret` 直连，不再有配对码；服务端仍照常发 `session.authorize_request`，由受控端自动回 `session.authorize_grant`（本地审计标注 `unattended.auto_grant`）。服务端**不得**替无人值守会话跳过授权门控或放宽 `authorizedFor` 绑定。凭据校验失败一律返回统一错误，防止设备枚举。
+- **设备直连模式**：控制端用 `deviceId + password` 直连，不再有配对码；服务端仍照常发 `session.authorize_request`，由受控端自动回 `session.authorize_grant`（本地审计标注 `unattended.auto_grant`）。服务端**不得**替无人值守会话跳过授权门控或放宽 `authorizedFor` 绑定。凭据校验失败一律返回统一错误，防止设备枚举。
 - host 断线 → 房间立即关闭，controller 收到 `session.closed(code=4001)`；controller 断线 → host 收到 `session.peer_left` 并可等待重连（30s 宽限）。
 - 会话绝对上限 `SESSION_TTL`（默认 3600s），到期强制关闭。
 
@@ -58,9 +58,10 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
-| POST | `/sessions` | 无（限流） | 受控端创建会话，获取配对码与 host token。可选 `unattended:{deviceId,secret}`：校验通过后不签发配对码，会话标记为无人值守 |
-| POST | `/sessions/claim` | 无（IP 8/min + 按码 5/TTL 双限流） | 控制端用配对码认领会话 |
-| POST | `/sessions/claim-device` | 无（IP 8/min + 按 deviceId 10/min 双限流） | 无人值守设备直连：`{deviceId,secret,device}`，响应结构与 `/claim` 相同 |
+| POST | `/sessions` | 无（限流） | 受控端创建会话；必填 `deviceAuth:{deviceId,password,oldPassword?}`，首次自动注册；不再签发配对码 |
+| POST | `/sessions/claim-device` | 无（IP 8/min + 按 deviceId 10/min + 失败锁定） | 控制端用设备号 + 6 位密码认领会话：`{deviceId,password,device}` |
+| POST | `/devices/temporary` | Bearer（host） | 设置/清除限时临时密码：`{deviceId,permanentPassword,temporaryPassword,expiresAt}` |
+| POST | `/devices/password` | Bearer（host） | 重置长期密码（需旧密码）：`{deviceId,oldPassword,newPassword}` |
 | GET | `/sessions/:id` | Bearer（host/controller/observer） | 查询会话状态（含 `authorized`） |
 | DELETE | `/sessions/:id` | Bearer（host/controller） | 主动结束会话 |
 | POST | `/auth/refresh` | Body `refreshToken` | 换新 access token |
@@ -79,24 +80,28 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
     "osVersion": "Android 14",
     "appVersion": "1.0.0",
     "screen": { "width": 1080, "height": 2400, "density": 2.75, "rotation": 0 }
+  },
+  "deviceAuth": {
+    "deviceId": "382915046",
+    "password": "483920"
   }
 }
-// response 201
+// response 201（不再签发配对码）
 {
   "sessionId": "s_7f3a...",
-  "pairingCode": "483920",
   "expiresAt": 1763190123456,
-  "expiresIn": 60,
+  "expiresIn": 3600,
   "accessToken": "<jwt>",
   "refreshToken": "<opaque>",
   "accessTokenExpiresIn": 900
 }
 ```
 
-### POST /sessions/claim
+### POST /sessions/claim-device
 ```jsonc
-// request  { "pairingCode": "483920", "device": { ...控制端设备信息... } }
-// response 200
+// request
+{ "deviceId": "382915046", "password": "483920", "device": { ...控制端设备信息... } }
+// response 200（与原 /claim 结构一致）
 {
   "sessionId": "s_7f3a...",
   "host": { "model": "Pixel 8", "osVersion": "Android 14",
@@ -107,7 +112,7 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 
 ### 统一错误响应
 ```json
-{ "error": { "code": "PAIRING_EXPIRED", "message": "配对码错误次数过多，已作废", "requestId": "uuid" } }
+{ "error": { "code": "DEVICE_LOCKED", "message": "密码错误次数过多，设备已临时锁定", "requestId": "uuid" } }
 ```
 
 ### 错误码表
@@ -116,11 +121,11 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 | `INVALID_INPUT` | 400 | 参数校验失败 |
 | `UNAUTHORIZED` | 401 | 凭证缺失/无效/过期 |
 | `FORBIDDEN` | 403 | 角色无权执行 |
-| `PAIRING_NOT_FOUND` | 404 | 配对码不存在 |
-| `PAIRING_CONSUMED` | 409 | 配对码已被使用或会话不可认领 |
+| `DEVICE_AUTH_FAILED` | 401 | 设备号或密码错误（与设备不存在响应一致，防枚举） |
+| `DEVICE_NOT_ONLINE` | 404 | 凭据正确但没有可认领的在线会话 |
 | `SESSION_NOT_FOUND` | 404 | 会话不存在或已结束 |
 | `SESSION_FULL` | 409 | 控制端名额已满 |
-| `PAIRING_EXPIRED` | 410 | 过期，或错误次数超限被作废 |
+| `DEVICE_LOCKED` | 429 | 密码连续错误，设备临时锁定 |
 | `SESSION_CLOSED` | 410 | 会话已关闭 |
 | `RATE_LIMITED` | 429 | 触发限流 |
 | `INTERNAL` | 500 | 内部错误（不返回堆栈） |
@@ -217,7 +222,7 @@ TS 实现见 `server/src/shared/protocol.ts`，Kotlin 实现见两个 Android �
 1. JWT `HS256`，access token TTL 15min；refresh token 为 32 字节随机数，仅存服务端内存并绑定 `jti`，刷新后轮换。
 2. 令牌不得写入 `localStorage`、不得出现在 URL query、不得写入日志。Android 端存 `EncryptedSharedPreferences`。
 3. CORS 使用显式白名单，生产禁用 `*`。
-4. **配对码失败锁定按码计数**，并在 `/claim` 叠加按码限流；限流键在 `TRUST_PROXY=false` 时取真实 TCP 对端，启用 `TRUST_PROXY` 必须由边缘反代覆盖 `X-Forwarded-For` 且容器端口不得直曝。
+4. **密码失败锁定按设备号计数**，并在 `/claim-device` 叠加按 deviceId 限流；限流键在 `TRUST_PROXY=false` 时取真实 TCP 对端，启用 `TRUST_PROXY` 必须由边缘反代覆盖 `X-Forwarded-For` 且容器端口不得直曝。
 5. **控制指令必须经被协助者在会话内显式授权**，授权绑定控制端设备；配合系统投屏授权与无障碍服务开关，构成三道确认。
 6. 服务端不缓存任何屏幕内容；受控端常驻「随时断开」通知，会话结束立即释放 MediaProjection 与本地注入能力。
 7. release 构建禁用明文 HTTP、不预置任何服务器地址；明文地址仅存在于 debug 变体。

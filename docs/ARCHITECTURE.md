@@ -6,7 +6,7 @@
 |---|---|---|---|
 | 中继服务器 | `server/` | Node 22 + TypeScript + Express + ws | 配对、鉴权、WebSocket 房间转发、健康检查 |
 | 受控端 | `android-host/` | Kotlin + MediaProjection + MediaCodec + AccessibilityService | 采集屏幕、H.264 编码推流、注入操作 |
-| 控制端 | `android-controller/` | Kotlin + MediaCodec + OkHttp | 输入配对码、解码显示、手势映射 |
+| 控制端 | `android-controller/` | Kotlin + MediaCodec + OkHttp | 输入设备号 + 6 位密码、解码显示、手势映射 |
 | Web 运维看板 | `web-console/` | Vite + React + TypeScript | 只读监控会话/设备/流量 |
 | 协议 | `docs/PROTOCOL.md` | — | 三端唯一权威约定 |
 
@@ -18,7 +18,7 @@
 HTTP / WS 边界
   controller     解析请求、调用服务、格式化响应，不含业务规则
   service        业务规则与编排（配对状态机、令牌签发、转发策略）
-  repository     内存状态访问（配对码、会话、令牌），带 TTL 清理
+  repository     内存状态访问（会话、令牌）+ 设备凭据持久化（peppered 摘要），带 TTL 清理
   gateway        WebSocket Upgrade 与房间，是独立的传输适配器
 ```
 
@@ -29,7 +29,7 @@ HTTP / WS 边界
 | 决策 | 理由 |
 |---|---|
 | 按功能组织目录（features/pairing、auth、session、health） | 同一功能的内聚变更只需改一个目录 |
-| 内存仓储 + Repository 接口，不引入数据库 | 配对码与会话是「断开即失效」的易失状态；落库会破坏安全模型并引入状态恢复复杂度 |
+| 会话内存仓储 + 设备凭据 JSON 持久化，不引入数据库 | 会话是「断开即失效」的易失状态；设备凭据需跨重启保留但只存摘要，JSON 足够且避免引入数据库 |
 | 归一化坐标 0..1 | 两端分辨率/旋转不同，禁止控制端假设像素 |
 | 视频走二进制帧、指令走文本帧 | 单一连接上隔离大流量与控制指令，避免队头阻塞 |
 | access 15min + 服务端 refresh 轮换 | 远程控制权限极高，短时效 + 可撤销 |
@@ -52,7 +52,7 @@ service 与 controller 无需改动；WebSocket 需增加粘性会话或跨节�
 - [ ] `JWT_SECRET`、`ADMIN_API_KEY` 换成 32 字节以上随机值，仅存环境变量
 - [ ] `NODE_ENV=production`，`CORS_ORIGINS` 去掉本地地址
 - [ ] 全链路 HTTPS / WSS；`TRUST_PROXY` 仅在「容器端口不对外 + 反代覆盖 XFF」时开启，反代需透传 WS Upgrade
-- [ ] 配置反向代理层限流（当前进程内限流仅单实例有效；配对码另有按码计数与失败锁定，与 IP 无关）
+- [ ] 配置反向代理层限流（当前进程内限流仅单实例有效；设备密码另有按设备计数与失败锁定，与 IP 无关）
 - [ ] 开启 `MAX_SESSIONS` 告警与 `/ready` 探针接入编排系统
 - [ ] Android 端接入证书锁定（certificate pinning）
 - [x] 会话级授权：未获受控端确认前不推画面、不转发 `control.*`，授权绑定控制端设备（v2）
